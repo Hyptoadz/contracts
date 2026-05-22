@@ -35,7 +35,7 @@ contract NFTStaking is ReentrancyGuard, Ownable, IERC721Receiver {
     uint256[5] public LOCK_DURATIONS  = [0, 7 days, 30 days, 90 days, 180 days];
     // Daily pool distributed proportionally to all stakers
     // More stakers = lower per-NFT reward (sustainable APY)
-    uint256 public DAILY_POOL = 10_000 * PRECISION; // 10,000 $TOADZ/day total
+    uint256 public constant DAILY_POOL = 10_000 * PRECISION; // 10,000 $TOADZ/day total
 
     // Lock multipliers (x10 precision) — longer lock = bigger share
     uint256[5] public LOCK_WEIGHT_X10  = [10, 16, 30, 50, 80]; // 1x 1.6x 3x 5x 8x
@@ -63,6 +63,8 @@ contract NFTStaking is ReentrancyGuard, Ownable, IERC721Receiver {
     }
 
     mapping(uint256 => StakeInfo) public stakes;
+    mapping(uint256 => uint8) public tokenRarity; // persistent rarity, survives unstake
+    bool public rarityLocked; // true after lockRarity() is called
     mapping(address => uint256[]) private _userTokens;
 
     // ── Events ─────────────────────────────────────────────────
@@ -89,6 +91,7 @@ contract NFTStaking is ReentrancyGuard, Ownable, IERC721Receiver {
     ) Ownable(_owner) {
         nftContract = IERC721(_nftContract);
         toadzToken  = IERC20(_toadzToken);
+        rewardPool  = 90_000_000 * 1e18; // initialize with minted allocation
     }
 
     // ── Pool management ────────────────────────────────────────
@@ -149,20 +152,21 @@ contract NFTStaking is ReentrancyGuard, Ownable, IERC721Receiver {
             ? 0
             : block.timestamp + LOCK_DURATIONS[lockTier];
 
-        uint256 weight = _calcWeight(lockTier, 0);
+        uint8 existingRarity = tokenRarity[tokenId]; // read persistent rarity
+        uint256 finalWeight = _calcWeight(lockTier, existingRarity);
         stakes[tokenId] = StakeInfo({
             owner:       msg.sender,
             lockTier:    lockTier,
             stakedAt:    block.timestamp,
             lockUntil:   lockUntil,
             lastClaimed: block.timestamp,
-            rarity:      0,
-            weight:      weight
+            rarity:      existingRarity,
+            weight:      finalWeight
         });
 
         _userTokens[msg.sender].push(tokenId);
         totalStaked++;
-        totalWeightedStakes += weight;
+        totalWeightedStakes += finalWeight;
 
         emit Staked(msg.sender, tokenId, lockTier, lockUntil);
     }
@@ -250,13 +254,19 @@ contract NFTStaking is ReentrancyGuard, Ownable, IERC721Receiver {
     /**
      * @notice Set rarity after metadata reveal
      */
+    function lockRarity() external onlyOwner {
+        rarityLocked = true;
+    }
+
     function setRarityBatch(
         uint256[] calldata tokenIds,
         uint8[]   calldata rarities
     ) external onlyOwner {
+        require(!rarityLocked, "Rarity permanently locked");
         require(tokenIds.length == rarities.length, "Length mismatch");
         for (uint256 i = 0; i < tokenIds.length; i++) {
             if (rarities[i] > 4) revert InvalidRarity();
+            tokenRarity[tokenIds[i]] = rarities[i]; // persist across unstake
             StakeInfo storage s = stakes[tokenIds[i]];
             if (s.owner != address(0)) {
                 // Update totalWeightedStakes with new weight
@@ -264,8 +274,8 @@ contract NFTStaking is ReentrancyGuard, Ownable, IERC721Receiver {
                 uint256 newWeight = _calcWeight(s.lockTier, rarities[i]);
                 totalWeightedStakes = totalWeightedStakes - oldWeight + newWeight;
                 s.weight = newWeight;
+                s.rarity = rarities[i];
             }
-            s.rarity = rarities[i];
             emit RarityUpdated(tokenIds[i], rarities[i]);
         }
     }
@@ -329,7 +339,7 @@ contract NFTStaking is ReentrancyGuard, Ownable, IERC721Receiver {
 
         // Proportional: userShare = DAILY_POOL * userWeight / totalWeightedStakes
         // reward = userShare * elapsed / 1 day
-        return DAILY_POOL * s.weight / totalWeightedStakes * elapsed / 1 days;
+        return DAILY_POOL * s.weight * elapsed / totalWeightedStakes / 1 days;
     }
 
     function _removeUserToken(address user, uint256 tokenId) internal {

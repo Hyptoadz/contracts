@@ -13,10 +13,12 @@ interface IHyptoadzNFT {
     function totalAirdropped() external view returns (uint256);
     function isBaseURISet() external view returns (bool);
     function enableTransfers() external;
+    function transfersEnabled() external view returns (bool);
 }
 
 interface IToadzToken {
     function enableTrading() external;
+    function enableTax() external;
     function setDexPair(address _pair) external;
 }
 interface IDEXFactory {
@@ -76,7 +78,7 @@ contract HyptoadzMint is ReentrancyGuard, Ownable {
     uint256 public constant GIVEAWAY_SUPPLY    = 9;    // Reserved for community events
     uint256 public constant LP_TOADZ_AMOUNT    = 100_000_000 * 1e18;
     uint256 public constant TOADZ_PER_MINT     = 27_855 * 1e18;
-    uint256 public constant MINT_REWARDS_TOTAL = 178_320_000 * 1e18;
+    uint256 public constant MINT_REWARDS_TOTAL = 180_000_000 * 1e18;
 
     // Dynamic split constants
     // Creator starts 40%, drops -5% every 1,500 mints, min 20%
@@ -85,7 +87,7 @@ contract HyptoadzMint is ReentrancyGuard, Ownable {
     // 1,501-3,000  35%        65%
     // 3,001-4,500  30%        70%
     // 4,501-6,000  25%        75%
-    // 6,000+       50%        50%  ← max
+    // 6,001+       20%        80%  ← min creator
     uint256 public constant SPLIT_THRESHOLD  = 1_500; // every 1500 mints
     uint256 public constant CREATOR_DROP_PCT = 5;     // drops -5% per threshold
     uint256 public constant CREATOR_INITIAL  = 40;    // starts at 40%
@@ -126,7 +128,6 @@ contract HyptoadzMint is ReentrancyGuard, Ownable {
     // ── Events ─────────────────────────────────────────────────
     event MintStarted(uint256 startTime, uint256 endTime);
     event AirdropBatchSent(uint256 count, uint256 totalSoFar);
-    event AirdropCompleted(uint256 totalWallets);
     event PublicMint(
         address indexed minter,
         uint256 tokenId,
@@ -189,7 +190,7 @@ contract HyptoadzMint is ReentrancyGuard, Ownable {
 
     /**
      * @notice Get current creator % based on how many have been minted
-     * @dev Every 1,500 mints → creator rises +5%, max 50%
+     * @dev Every 1,500 mints → creator share drops -5%, min 20%
      *
      * publicMinted  creatorPct  lpPct
      * 0             30%         70%
@@ -239,8 +240,8 @@ contract HyptoadzMint is ReentrancyGuard, Ownable {
     function startMint() external onlyOwner {
         require(mintStart == 0, "Already started");
         require(
-            IERC20(toadzToken).balanceOf(address(this)) >= LP_TOADZ_AMOUNT,
-            "Transfer 50M TOADZ first"
+            IERC20(toadzToken).balanceOf(address(this)) >= LP_TOADZ_AMOUNT + MINT_REWARDS_TOTAL,
+            "Transfer 280M TOADZ first"
         );
         require(
             IHyptoadzNFT(nftContract).isBaseURISet(),
@@ -314,8 +315,7 @@ contract HyptoadzMint is ReentrancyGuard, Ownable {
         IHyptoadzNFT(nftContract).airdropBatch(recipients, nftCounts, toadzAmounts);
     }
 
-    /// @notice Testnet only — force airdropDone = true for testing
-
+    
     function airdropRemaining() external view returns (uint256) {
         return AIRDROP_SUPPLY - (_nextAirdropId - 1);
     }
@@ -484,10 +484,18 @@ contract HyptoadzMint is ReentrancyGuard, Ownable {
         );
 
         emit LiquidityAdded(hypeForLP, LP_TOADZ_AMOUNT);
+        // Auto set dex pair so tax activates
+        address weth = IDEXRouter2(dexRouter).WETH();
+        address pair = IDEXFactory(dexFactory).getPair(toadzToken, weth);
+        if (pair != address(0)) {
+            IToadzToken(toadzToken).setDexPair(pair);
+            emit DexPairSet(pair);
+        }
 
         // Unlock NFT transfers and $TOADZ trading
         IHyptoadzNFT(nftContract).enableTransfers();
         IToadzToken(toadzToken).enableTrading();
+        IToadzToken(toadzToken).enableTax();
     }
 
     /**
@@ -511,22 +519,29 @@ contract HyptoadzMint is ReentrancyGuard, Ownable {
             if (toadzLeftover > 0) {
                 bool ok = IERC20(toadzToken).transfer(nftStakingContract, toadzLeftover);
                 require(ok, "Leftover transfer failed");
+                INFTStaking(nftStakingContract).addToPoolDirect(toadzLeftover);
             }
-            if (creatorAccumulated > 0) {
-                uint256 toSend = creatorAccumulated;
+            uint256 creatorSend = creatorAccumulated;
+            if (creatorSend > 0) {
                 creatorAccumulated = 0;
-                (bool ok,) = creatorWallet.call{value: toSend}("");
+                (bool ok,) = creatorWallet.call{value: creatorSend}("");
                 if (!ok) revert TransferFailed();
             }
-            emit FundsSplit(creatorAccumulated, lpAccumulated, MAX_PUBLIC - publicMinted, 0);
+            emit FundsSplit(creatorSend, lpAccumulated, MAX_PUBLIC - publicMinted, toadzLeftover);
         }
         // Step 2: addLiquidity logic inline
+        // Always enable transfers/trading even if no LP accumulated
+        if (!IHyptoadzNFT(nftContract).transfersEnabled()) {
+            IHyptoadzNFT(nftContract).enableTransfers();
+            IToadzToken(toadzToken).enableTrading();
+            IToadzToken(toadzToken).enableTax();
+        }
         if (!liquidityAdded && lpAccumulated > 0) {
-            liquidityAdded = true;
             uint256 hypeForLP = lpAccumulated;
             lpAccumulated = 0;
             uint256 toadzBal = IERC20(toadzToken).balanceOf(address(this));
             if (toadzBal >= LP_TOADZ_AMOUNT) {
+                liquidityAdded = true; // set true only after balance check passes
                 IERC20(toadzToken).approve(dexRouter, 0);
                 IERC20(toadzToken).approve(dexRouter, LP_TOADZ_AMOUNT);
                 IDEXRouter(dexRouter).addLiquidityETH{value: hypeForLP}(
@@ -538,6 +553,17 @@ contract HyptoadzMint is ReentrancyGuard, Ownable {
                     block.timestamp + 300
                 );
                 emit LiquidityAdded(hypeForLP, LP_TOADZ_AMOUNT);
+                // Auto set dex pair so tax activates
+                address weth2 = IDEXRouter2(dexRouter).WETH();
+                address pair2 = IDEXFactory(dexFactory).getPair(toadzToken, weth2);
+                if (pair2 != address(0)) {
+                    IToadzToken(toadzToken).setDexPair(pair2);
+                    emit DexPairSet(pair2);
+                }
+                // Unlock NFT transfers and $TOADZ trading
+                IHyptoadzNFT(nftContract).enableTransfers();
+                IToadzToken(toadzToken).enableTrading();
+        IToadzToken(toadzToken).enableTax();
             }
         }
     }

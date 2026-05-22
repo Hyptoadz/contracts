@@ -16,7 +16,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
  *
  * Token ID structure:
  *   Airdrop : #1     → #3,538
- *   Public  : #3,539 → #10,000
+ *   Public  : #3,601 → #10,000
  */
 contract HyptoadzNFT is ERC721, ERC721Enumerable, ERC2981, Ownable {
 
@@ -67,7 +67,9 @@ contract HyptoadzNFT is ERC721, ERC721Enumerable, ERC2981, Ownable {
     constructor(address _owner)
         ERC721("Hyptoadz", "HTOADZ")
         Ownable(_owner)
-    {}
+    {
+        _setDefaultRoyalty(_owner, 250); // 2.5% royalty
+    }
 
     // ── Admin ──────────────────────────────────────────────────
 
@@ -128,7 +130,7 @@ contract HyptoadzNFT is ERC721, ERC721Enumerable, ERC2981, Ownable {
         }
     }
 
-    // ── Mint (called by HyptoadzMint contract only) ────────────
+    // ── Mint (called by HyptoadzMint only) ─────────────────────
 
     function mintPublic(address to, uint256 tokenId)
         external

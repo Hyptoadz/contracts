@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
+interface INFTStakingPool { function addToPoolDirect(uint256 amount) external; }
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
@@ -44,7 +45,6 @@ contract ToadzToken is ERC20, Ownable {
     // ── Addresses ──────────────────────────────────────────────
     address public dexPair;
     address public nftStakingContract;
-    address public lpPool;
     address public constant DEAD = 0x000000000000000000000000000000000000dEaD;
 
     // ── State ──────────────────────────────────────────────────
@@ -80,7 +80,6 @@ contract ToadzToken is ERC20, Ownable {
         address _nftStakingContract,
         address _tokenStakingContract,
         address _revShareContract,
-        address _lpContract,
         address _airdropContract
     ) ERC20("$TOADZ", "TOADZ") Ownable(_owner) {
         if (_mintContract        == address(0)) revert ZeroAddress();
@@ -88,14 +87,13 @@ contract ToadzToken is ERC20, Ownable {
         if (_tokenStakingContract == address(0)) revert ZeroAddress();
         if (_revShareContract    == address(0)) revert ZeroAddress();
         if (_airdropContract     == address(0)) revert ZeroAddress();
-        if (_lpContract          == address(0)) revert ZeroAddress();
 
         nftStakingContract = _nftStakingContract;
-        lpPool = _lpContract;
+        mintContract = _mintContract;
 
         // Mint all allocations
         _mint(_mintContract,          MINT_REWARDS);
-        _mint(_lpContract,            LP_AMOUNT);
+        _mint(_mintContract,          LP_AMOUNT); // LP TOADZ minted to mint contract
         _mint(_nftStakingContract,    NFT_STAKING);
         _mint(_tokenStakingContract,  TOKEN_STAKING);
         _mint(_revShareContract,      REV_SHARE);
@@ -107,7 +105,6 @@ contract ToadzToken is ERC20, Ownable {
         isExcludedFromTax[_tokenStakingContract]  = true;
         isExcludedFromTax[_revShareContract]      = true;
         isExcludedFromTax[_airdropContract]       = true;
-        isExcludedFromTax[_lpContract]            = true;
         isExcludedFromTax[_owner]                 = true;
         isExcludedFromTax[address(this)]          = true;
 
@@ -120,13 +117,7 @@ contract ToadzToken is ERC20, Ownable {
 
     // ── Admin ──────────────────────────────────────────────────
 
-    function setMintContract(address _mint) external onlyOwner {
-        require(mintContract == address(0), "Already set");
-        require(_mint != address(0), "Zero address");
-        mintContract = _mint;
-        isExcludedFromTax[_mint]  = true;
-        isExcludedFromLock[_mint] = true;
-    }
+
 
     function enableTrading() external {
         require(msg.sender == mintContract || msg.sender == owner(), "Not authorized");
@@ -143,7 +134,8 @@ contract ToadzToken is ERC20, Ownable {
         emit DexPairSet(_pair);
     }
 
-    function enableTax() external onlyOwner {
+    function enableTax() external {
+        require(msg.sender == mintContract || msg.sender == owner(), "Not authorized");
         if (taxEnabled) revert TaxAlreadyEnabled();
         taxEnabled = true;
         emit TaxEnabled();
@@ -201,8 +193,9 @@ contract ToadzToken is ERC20, Ownable {
 
         // Distribute tax
         super._update(from, nftStakingContract, stakingAmt);
+        if (stakingAmt > 0) { try INFTStakingPool(nftStakingContract).addToPoolDirect(stakingAmt) {} catch {} }
         super._update(from, DEAD, burnAmt);
-        super._update(from, lpPool, lpAmt);
+        super._update(from, mintContract, lpAmt);
         super._update(from, to, transferAmt);
 
         // Track stats

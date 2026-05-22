@@ -211,6 +211,7 @@ contract TokenStaking is ReentrancyGuard, Ownable {
                 toadzRewardPool -= toadzReward;
                 bool toadzOk = toadzToken.transfer(_user, toadzReward);
                 require(toadzOk, "TOADZ transfer failed");
+                user.toadzRewardDebt = toadzPending; // update debt only after success
                 emit ToadzRewardClaimed(_user, toadzReward);
             }
         }
@@ -223,6 +224,7 @@ contract TokenStaking is ReentrancyGuard, Ownable {
                 hypeRewardPool -= hypeReward;
                 (bool ok, ) = payable(_user).call{value: hypeReward}("");
                 require(ok, "HYPE transfer failed");
+                user.hypeRewardDebt = hypePending; // update debt only after success
                 emit HypeRewardClaimed(_user, hypeReward);
             }
         }
