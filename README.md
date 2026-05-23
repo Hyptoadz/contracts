@@ -8,7 +8,7 @@
 
 ## Contract Addresses
 
-> ⚠️ Addresses will be published immediately after mainnet deploy. Do not interact with unverified contracts.
+
 
 | Contract | Address | Description |
 |----------|---------|-------------|
