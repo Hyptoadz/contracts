@@ -12,11 +12,11 @@
 
 | Contract | Address | Description |
 |----------|---------|-------------|
-| HyptoadzNFT | `— pending —` | ERC-721 NFT collection |
-| ToadzToken | `— pending —` | ERC-20 $TOADZ token |
-| HyptoadzMint | `— pending —` | Core mint + liquidity logic |
-| NFTStaking | `— pending —` | NFT staking rewards |
-| TokenStaking | `— pending —` | $TOADZ token staking |
+| HyptoadzNFT | `0x0c7424A75E09D257a2772c9C4Aa8aeE7d56019AA` | ERC-721 NFT collection |
+| ToadzToken | `0x47cA9Bf19BdF9Da434df713AF82Fc1Fd30f685b6` | ERC-20 $TOADZ token |
+| HyptoadzMint | `0x30B6fB811b45fAD7f02423edd9af88712d5256B1` | Core mint + liquidity logic |
+| NFTStaking | `0xeeFDd272B465b10595aAEE83eb744DCcEAf70FEf` | NFT staking rewards |
+| TokenStaking | `0x3489A7e74F3814563bFa31799574f5Be70C475f0` | $TOADZ token staking |
 
 **Network:** HyperEVM mainnet · **Chain ID:** 999 · **RPC:** `rpc.hyperliquid.xyz/evm`  
 **DEX:** HyperSwap V2 · **Royalty:** 2.5% (ERC-2981)
